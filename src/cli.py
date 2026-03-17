@@ -1,5 +1,6 @@
 """Typer CLI app and commands for CD ripping."""
 
+import pathlib
 import typer
 
 app = typer.Typer(
@@ -7,9 +8,133 @@ app = typer.Typer(
     help="Rip audio from CD to one or more formats with metadata (AccurateRip optional).",
 )
 
+config_app = typer.Typer(help="Export or import settings to/from a TOML file.")
+app.add_typer(config_app, name="config")
+
+
+@config_app.command("export")
+def config_export(
+    output: pathlib.Path = typer.Option(
+        ...,
+        "--output",
+        "-o",
+        path_type=pathlib.Path,
+        help="Path to write the TOML config file.",
+    ),
+) -> None:
+    """Export current default configurations to a TOML file."""
+    from src.config import DEFAULT_CONFIG, save_config
+
+    save_config(output, DEFAULT_CONFIG)
+    typer.echo(f"Exported settings to {output}")
+
+
+@config_app.command("import")
+def config_import(
+    path: pathlib.Path = typer.Argument(
+        ...,
+        path_type=pathlib.Path,
+        help="Path to the TOML config file to import.",
+    ),
+) -> None:
+    """Validate and show path to use for rip --config. Does not change CLI state."""
+    from src.config import load_config
+
+    try:
+        cfg = load_config(path)
+        typer.echo(f"Valid config: {path}")
+        typer.echo(f"Use: cdrip rip --config {path}")
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Invalid config: {e}", err=True)
+        raise typer.Exit(1)
+
+
+def _apply_config_to_rip_options(
+    config_file: pathlib.Path | None,
+    format: list[str],
+    output_dir: list[str],
+    name_format: str,
+    folder_format: str,
+    device: str,
+    no_lookup: bool,
+    no_interactive: bool,
+    verify_accuraterip: bool,
+    quality: list[str],
+    bitrate: list[str],
+) -> tuple[
+    list[str],
+    list[str],
+    str,
+    str,
+    str,
+    bool,
+    bool,
+    bool,
+    list[str],
+    list[str],
+]:
+    """If config_file is set, use it as base; CLI args override when non-empty."""
+    if not config_file or not config_file.exists():
+        return (
+            format,
+            output_dir,
+            name_format,
+            folder_format,
+            device,
+            no_lookup,
+            no_interactive,
+            verify_accuraterip,
+            quality,
+            bitrate,
+        )
+    from src.config import load_config
+
+    cfg = load_config(config_file)
+    if not format or format == ["flac"]:
+        format = cfg["formats"]
+    if not output_dir and cfg.get("output_dirs"):
+        output_dir = [f"{k}:{v}" for k, v in cfg["output_dirs"].items()]
+    if not name_format or name_format == "%(track_number)2.2d - %(track_name)s":
+        name_format = cfg.get("name_format") or "%(track_number)2.2d - %(track_name)s"
+    if not folder_format:
+        folder_format = cfg.get("folder_format") or ""
+    if not device:
+        device = cfg.get("device") or ""
+    if not no_lookup:
+        no_lookup = cfg.get("no_lookup", False)
+    if not no_interactive:
+        no_interactive = cfg.get("no_interactive", False)
+    verify_accuraterip = cfg.get("verify_accuraterip", True)
+    if not quality and cfg.get("quality"):
+        quality = [f"{k}:{v}" for k, v in cfg["quality"].items()]
+    if not bitrate and cfg.get("bitrate"):
+        bitrate = [f"{k}:{v}" for k, v in cfg["bitrate"].items()]
+    return (
+        formats,
+        output_dir,
+        name_format,
+        folder_format,
+        device,
+        no_lookup,
+        no_interactive,
+        verify_accuraterip,
+        quality,
+        bitrate,
+    )
+
 
 @app.command()
 def rip(
+    config: pathlib.Path | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        path_type=pathlib.Path,
+        help="Load settings from TOML file. CLI options override file values.",
+    ),
     format: list[str] = typer.Option(
         ["flac"],
         "--format",
@@ -67,10 +192,35 @@ def rip(
     ),
 ) -> None:
     """Rip CD to one or more formats with metadata and optional AccurateRip verification."""
+    from src.bitrates import format_supported_list, is_bitrate_supported
     from src.cd import get_default_device, open_cd
     from src.encode import run_rip
     from src.metadata import resolve_metadata
-    from src.bitrates import is_bitrate_supported, format_supported_list
+
+    (
+        format,
+        output_dir,
+        name_format,
+        folder_format,
+        device,
+        no_lookup,
+        no_interactive,
+        verify_accuraterip,
+        quality,
+        bitrate,
+    ) = _apply_config_to_rip_options(
+        config,
+        format,
+        output_dir,
+        name_format,
+        folder_format,
+        device,
+        no_lookup,
+        no_interactive,
+        verify_accuraterip,
+        quality,
+        bitrate,
+    )
 
     device_path = (device or get_default_device()).strip()
 

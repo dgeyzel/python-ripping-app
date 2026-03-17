@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import subprocess
+import wave
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+LogCallback = Callable[[str, bool], None]  # (message, is_stderr)
 
 from src.metadata_types import MetaData
 
@@ -138,6 +141,15 @@ def _encode_mp3(pcm_bytes: bytes, out_path: Path, bitrate: str = "192") -> None:
         )
 
 
+def _encode_wav(pcm_bytes: bytes, out_path: Path) -> None:
+    """Encode raw PCM (44.1kHz 16-bit stereo) to WAV using stdlib wave."""
+    with wave.open(str(out_path), "wb") as wav_file:
+        wav_file.setnchannels(2)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(44100)
+        wav_file.writeframes(pcm_bytes)
+
+
 def _apply_metadata(out_path: Path, meta: Any, suffix: str) -> None:
     """Write tags to file using mutagen (FLAC/MP3)."""
     try:
@@ -182,7 +194,7 @@ def _apply_metadata(out_path: Path, meta: Any, suffix: str) -> None:
             pass
 
 
-_SUPPORTED_FORMATS = {"flac", "mp3"}
+_SUPPORTED_FORMATS = {"flac", "mp3", "wav"}
 
 
 def _encode_track(
@@ -202,7 +214,10 @@ def _encode_track(
         _encode_flac(pcm_bytes, out_path, compression or "5")
     elif fmt_lower == "mp3":
         _encode_mp3(pcm_bytes, out_path, compression or "192")
-    _apply_metadata(out_path, meta, fmt)
+    elif fmt_lower == "wav":
+        _encode_wav(pcm_bytes, out_path)
+    if fmt_lower != "wav":
+        _apply_metadata(out_path, meta, fmt)
 
 
 def run_rip(
@@ -216,11 +231,18 @@ def run_rip(
     quality_map: dict[str, str],
     bitrate_map: dict[str, str] | None = None,
     verify_accuraterip: bool = True,
+    log_callback: LogCallback | None = None,
 ) -> None:
     """Rip all tracks to the given formats with metadata. AccurateRip if available."""
     import typer
 
     from src.templates import build_track_dir_and_filename
+
+    def log(msg: str, err: bool = False) -> None:
+        if log_callback:
+            log_callback(msg, err)
+        else:
+            typer.echo(msg, err=err)
 
     num_tracks = len(track_lengths)
     meta_list = metadata_list or [
@@ -233,7 +255,7 @@ def run_rip(
     meta_list = meta_list[:num_tracks]
 
     if verify_accuraterip:
-        typer.echo("AccurateRip: unavailable (install python-audio-tools for verification)")
+        log("AccurateRip: unavailable (install python-audio-tools for verification)")
 
     split_readers = reader.get_track_readers(track_lengths)
     for track_index, pcm_reader in enumerate(split_readers, 1):
@@ -253,6 +275,6 @@ def run_rip(
             compression = _get_compression(fmt, quality_map, bitrate_map)
             try:
                 _encode_track(pcm_bytes, fmt, out_path, compression, meta)
-                typer.echo(f"  Wrote {out_path}")
+                log(f"  Wrote {out_path}")
             except Exception as e:
-                typer.echo(f"  Error encoding {out_path}: {e}", err=True)
+                log(f"  Error encoding {out_path}: {e}", err=True)

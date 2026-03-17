@@ -10,6 +10,9 @@ dependencies = [
     "musicbrainzngs>=0.7",
     "discid>=1.2",
     "mutagen>=1.47",
+    "customtkinter>=5.2.0",
+    "tomli>=2.0.0",
+    "tomli-w>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +24,7 @@ dev = [
 
 [project.scripts]
 cdrip = "src.cli:app"
+cdrip-gui = "src.gui:main"
 
 [build-system]
 requires = ["hatchling"]

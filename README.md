@@ -1,6 +1,6 @@
-# CD Ripper CLI
+# CD Ripper
 
-A cross-platform (Windows and Linux) command-line application to rip audio from a CD to one or more formats (FLAC, MP3) with MusicBrainz metadata lookup, configurable naming, and optional AccurateRip verification.
+A cross-platform (Windows and Linux) application to rip audio from a CD to one or more formats (FLAC, MP3, WAV) with MusicBrainz metadata lookup, configurable naming, and optional AccurateRip verification. Use the **CLI** or the **desktop GUI**.
 
 ## Requirements
 
@@ -17,7 +17,21 @@ uv sync
 
 No separate audiotools install. AccurateRip verification is optional; install python-audio-tools from source if you want verification (see below).
 
-## Usage
+## Desktop GUI
+
+The GUI uses **CustomTkinter** (included in the project dependencies) and Python’s **tkinter** (standard library; on Linux you may need `python3-tk`). Run the graphical interface (Linux and Windows):
+
+```bash
+uv run cdrip-gui
+```
+
+The GUI provides:
+
+- **List CD**: Choose device or CUE file, list tracks and MusicBrainz metadata.
+- **Rip CD**: Set device, output formats (FLAC, MP3, WAV), per-format output dirs, quality/bitrate, and options for metadata lookup and AccurateRip. Rip runs in the background with a log.
+- **Filename and folder format**: Each position in the format is a dropdown; select the token (track number, track name, artist, album, year, extension, separators, etc.) for that slot. Add or remove slots with **+ Add** and **×**. A live preview shows the resulting path/filename pattern.
+
+## CLI Usage
 
 - **Rip a CD** to one or more formats with MusicBrainz metadata lookup:
 
@@ -27,7 +41,7 @@ No separate audiotools install. AccurateRip verification is optional; install py
 
 - **Per-format output directory**: `--output-dir` / `-o` takes `format:path`, e.g. `flac:./music/flac`, `mp3:./music/mp3`.
 
-- **Filename template**: `--name-format` uses placeholders: `%(track_number)2.2d`, `%(track_name)s`, `%(artist_name)s`, `%(album_name)s`, `%(year)s`.
+- **Filename template**: `--name-format` uses placeholders: `%(track_number)2.2d`, `%(track_name)s`, `%(artist_name)s`, `%(album_name)s`, `%(year)s`, `%(suffix)s`.
 
 - **Folder structure**: `--folder-format` e.g. `"%(year)s/%(artist_name)s/%(album_name)s"` (sanitized for the filesystem).
 
@@ -83,4 +97,5 @@ uv run pytest
 
 ## License
 
-See repository license.
+This software is licensed under the GPLv3.
+See the license file in this repo for more information.
