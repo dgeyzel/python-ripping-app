@@ -88,6 +88,18 @@ pip install .
 
 The CLI works without it; you will see "AccurateRip: unavailable" when verification is requested.
 
+## Building executables
+
+You can build standalone executables (Windows `.exe` or Linux binaries) with **PyInstaller**:
+
+```bash
+uv sync --extra build-exe
+pyinstaller cdrip.spec
+pyinstaller cdrip_gui.spec
+```
+
+Output: `dist/cdrip`, `dist/cdrip-gui` (or `.exe` on Windows). The apps use **flac** and **lame** from the system PATH unless you bundle them in the project’s `bin/` folder before building (see [Building executables](docs/building-executables.md)).
+
 ## Development
 
 ```bash

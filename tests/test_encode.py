@@ -12,7 +12,7 @@ def test_encode_unsupported_format_raises():
         path = Path(f.name)
     try:
         with pytest.raises(ValueError, match="Unsupported format"):
-            _encode_track(b"\x00" * 1000, "wav", path, None, None)
+            _encode_track(b"\x00" * 1000, "ogg", path, None, None)
     finally:
         path.unlink(missing_ok=True)
 

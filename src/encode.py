@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import sys
 import wave
 from pathlib import Path
 from typing import Any, Callable
@@ -88,10 +90,29 @@ def _get_compression(
     return DEFAULT_QUALITY.get(fmt)
 
 
+def _get_encoder_path(name: str) -> str:
+    """Return path to encoder executable: prefer bundled bin/ then PATH."""
+    base: Path | None = None
+    if getattr(sys, "frozen", False):
+        # PyInstaller: one-file uses _MEIPASS, one-dir uses dir of executable
+        base = Path(getattr(sys, "_MEIPASS", sys.executable))
+        if not base.is_dir():
+            base = base.parent
+    if base is not None:
+        for candidate in (base / "bin" / name, base / "bin" / f"{name}.exe"):
+            if candidate.is_file():
+                return str(candidate)
+    found = shutil.which(name)
+    if found:
+        return found
+    return name
+
+
 def _encode_flac(pcm_bytes: bytes, out_path: Path, compression: str = "5") -> None:
     """Encode raw PCM (44.1kHz 16-bit stereo) to FLAC via subprocess."""
+    flac_cmd = _get_encoder_path("flac")
     args = [
-        "flac",
+        flac_cmd,
         "--force-raw-format",
         "--endian=little",
         "--sign=signed",
@@ -117,8 +138,9 @@ def _encode_flac(pcm_bytes: bytes, out_path: Path, compression: str = "5") -> No
 
 def _encode_mp3(pcm_bytes: bytes, out_path: Path, bitrate: str = "192") -> None:
     """Encode raw PCM (44.1kHz 16-bit stereo) to MP3 via lame."""
+    lame_cmd = _get_encoder_path("lame")
     args = [
-        "lame",
+        lame_cmd,
         "-r",
         "-s",
         "44.1",
