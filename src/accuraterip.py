@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Iterator
-
-if TYPE_CHECKING:
-    from audiotools.cdio import CDDAReader
+from typing import Any, Iterator
 
 try:
     import audiotools
@@ -25,7 +22,7 @@ class VerifyResult:
     offset: int
 
 
-def fetch_ar_matches(reader: CDDAReader) -> dict[int, list[tuple[int, int, int]]]:
+def fetch_ar_matches(reader: Any) -> dict[int, list[tuple[int, int, int]]]:
     """Fetch AccurateRip expected checksums for the disc.
 
     Returns:

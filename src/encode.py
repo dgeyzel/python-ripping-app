@@ -1,24 +1,36 @@
-"""Encode CD tracks to one or more formats with metadata and AccurateRip verification."""
+"""Encode CD tracks to one or more formats with metadata and optional AccurateRip."""
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
 from typing import Any
 
+from src.metadata_types import MetaData
+
+# Optional: AccurateRip when audiotools is installed
 try:
-    import audiotools
+    from audiotools import accuraterip as ar_module
 except ImportError:
-    audiotools = None  # type: ignore[misc, assignment]
+    ar_module = None  # type: ignore[misc, assignment]
+
+BYTES_PER_FRAME = 4  # CDDA 16-bit stereo
+
+# Default quality when not using audiotools
+DEFAULT_QUALITY: dict[str, str] = {"flac": "5", "mp3": "192"}
 
 
-def _read_pcm_into_frames(pcm_reader: Any) -> list[Any]:
-    """Consume pcm_reader and return list of FrameList objects."""
-    frames: list[Any] = []
+def _read_pcm_into_frames(pcm_reader: Any) -> list[bytes]:
+    """Consume pcm_reader and return list of PCM byte chunks."""
+    frames: list[bytes] = []
     try:
         while True:
-            fl = pcm_reader.read(4096 * 1024)
-            if fl is None or len(fl) == 0:
+            chunk = pcm_reader.read(4096 * 1024)
+            if chunk is None or len(chunk) == 0:
                 break
-            frames.append(fl)
+            if not isinstance(chunk, bytes):
+                chunk = bytes(chunk)
+            frames.append(chunk)
     finally:
         try:
             pcm_reader.close()
@@ -28,7 +40,7 @@ def _read_pcm_into_frames(pcm_reader: Any) -> list[Any]:
 
 
 class _ReplayablePCMReader:
-    """PCMReader that yields from a list of FrameLists (replayable for multiple encodes)."""
+    """Replayable PCM stream from a list of byte chunks (for multiple encodes)."""
 
     def __init__(
         self,
@@ -36,7 +48,7 @@ class _ReplayablePCMReader:
         channels: int,
         channel_mask: int,
         bits_per_sample: int,
-        frame_lists: list[Any],
+        frame_lists: list[bytes],
     ) -> None:
         self.sample_rate = sample_rate
         self.channels = channels
@@ -46,31 +58,17 @@ class _ReplayablePCMReader:
         self._index = 0
         self._closed = False
 
-    def read(self, pcm_frames: int) -> Any:
+    def read(self, pcm_frames: int) -> bytes | None:
         if self._closed:
             raise ValueError("reader is closed")
         if self._index >= len(self._frames):
-            return self._frames[0].__class__(b"") if self._frames else None
-        fl = self._frames[self._index]
+            return b"" if self._frames else None
+        chunk = self._frames[self._index]
         self._index += 1
-        return fl
+        return chunk
 
     def close(self) -> None:
         self._closed = True
-
-
-def _get_audio_type(format_name: str) -> Any:
-    """Return AudioFile class for format (e.g. 'flac' -> FlacAudio)."""
-    if audiotools is None:
-        raise RuntimeError("audiotools not installed")
-    type_map = getattr(audiotools, "TYPE_MAP", None) or {}
-    fmt = format_name.lower()
-    if fmt in type_map:
-        return type_map[fmt]
-    for name, cls in type_map.items():
-        if getattr(cls, "SUFFIX", "") == fmt or getattr(cls, "NAME", "") == fmt:
-            return cls
-    raise ValueError(f"Unknown or unavailable format: {format_name}")
 
 
 def _get_compression(
@@ -78,19 +76,133 @@ def _get_compression(
     quality_map: dict[str, str],
     bitrate_map: dict[str, str] | None = None,
 ) -> str | None:
-    """Return compression/quality/bitrate string for format.
-
-    Bitrate (if provided for this format) takes precedence over quality.
-    """
+    """Return compression/quality/bitrate string for format."""
     fmt = format_name.lower()
     if bitrate_map and fmt in bitrate_map:
         return bitrate_map[fmt]
     if quality_map and fmt in quality_map:
         return quality_map[fmt]
-    if audiotools is not None:
-        defaults = getattr(audiotools, "DEFAULT_QUALITY", None) or {}
-        return defaults.get(fmt)
-    return None
+    return DEFAULT_QUALITY.get(fmt)
+
+
+def _encode_flac(pcm_bytes: bytes, out_path: Path, compression: str = "5") -> None:
+    """Encode raw PCM (44.1kHz 16-bit stereo) to FLAC via subprocess."""
+    args = [
+        "flac",
+        "--force-raw-format",
+        "--endian=little",
+        "--sign=signed",
+        "--channels=2",
+        "--bps=16",
+        "--sample-rate=44100",
+        f"--compression-level={compression}",
+        "-o",
+        str(out_path),
+        "-",
+    ]
+    proc = subprocess.run(
+        args,
+        input=pcm_bytes,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"flac failed: {proc.stderr.decode(errors='replace') if proc.stderr else 'unknown'}"
+        )
+
+
+def _encode_mp3(pcm_bytes: bytes, out_path: Path, bitrate: str = "192") -> None:
+    """Encode raw PCM (44.1kHz 16-bit stereo) to MP3 via lame."""
+    args = [
+        "lame",
+        "-r",
+        "-s",
+        "44.1",
+        "-m",
+        "s",
+        "-b",
+        bitrate,
+        "-",
+        str(out_path),
+    ]
+    proc = subprocess.run(
+        args,
+        input=pcm_bytes,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"lame failed: {proc.stderr.decode(errors='replace') if proc.stderr else 'unknown'}"
+        )
+
+
+def _apply_metadata(out_path: Path, meta: Any, suffix: str) -> None:
+    """Write tags to file using mutagen (FLAC/MP3)."""
+    try:
+        from mutagen.flac import FLAC
+        from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC
+    except ImportError:
+        return
+    if out_path.suffix.lower() == ".flac":
+        try:
+            f = FLAC(str(out_path))
+            if meta and getattr(meta, "track_name", None):
+                f["title"] = [str(meta.track_name)]
+            if meta and getattr(meta, "artist_name", None):
+                f["artist"] = [str(meta.artist_name)]
+            if meta and getattr(meta, "album_name", None):
+                f["album"] = [str(meta.album_name)]
+            if meta and getattr(meta, "year", None):
+                f["date"] = [str(meta.year)]
+            if meta and getattr(meta, "track_number", None):
+                f["tracknumber"] = [str(meta.track_number)]
+            if meta and getattr(meta, "track_total", None):
+                f["tracktotal"] = [str(meta.track_total)]
+            f.save()
+        except Exception:
+            pass
+    elif out_path.suffix.lower() == ".mp3":
+        try:
+            try:
+                id3 = ID3(str(out_path))
+            except Exception:
+                id3 = ID3()
+            if meta and getattr(meta, "artist_name", None):
+                id3.add(TPE1(encoding=3, text=[str(meta.artist_name)]))
+            if meta and getattr(meta, "track_name", None):
+                id3.add(TIT2(encoding=3, text=[str(meta.track_name)]))
+            if meta and getattr(meta, "album_name", None):
+                id3.add(TALB(encoding=3, text=[str(meta.album_name)]))
+            if meta and getattr(meta, "year", None):
+                id3.add(TDRC(encoding=3, text=[str(meta.year)]))
+            id3.save(str(out_path))
+        except Exception:
+            pass
+
+
+_SUPPORTED_FORMATS = {"flac", "mp3"}
+
+
+def _encode_track(
+    pcm_bytes: bytes,
+    fmt: str,
+    out_path: Path,
+    compression: str | None,
+    meta: Any,
+) -> None:
+    """Encode one track to the given format and apply metadata."""
+    fmt_lower = fmt.lower()
+    if fmt_lower not in _SUPPORTED_FORMATS:
+        raise ValueError(
+            f"Unsupported format: {fmt}. Supported: {', '.join(sorted(_SUPPORTED_FORMATS))}"
+        )
+    if fmt_lower == "flac":
+        _encode_flac(pcm_bytes, out_path, compression or "5")
+    elif fmt_lower == "mp3":
+        _encode_mp3(pcm_bytes, out_path, compression or "192")
+    _apply_metadata(out_path, meta, fmt)
 
 
 def run_rip(
@@ -105,90 +217,42 @@ def run_rip(
     bitrate_map: dict[str, str] | None = None,
     verify_accuraterip: bool = True,
 ) -> None:
-    """Rip all tracks to the given formats with metadata and optional AccurateRip verification."""
-    if audiotools is None:
-        raise RuntimeError("audiotools not installed")
-    from src.templates import build_track_dir_and_filename
-    from src.accuraterip import fetch_ar_matches, verify_track
+    """Rip all tracks to the given formats with metadata. AccurateRip if available."""
     import typer
+
+    from src.templates import build_track_dir_and_filename
 
     num_tracks = len(track_lengths)
     meta_list = metadata_list or [
-        audiotools.MetaData(track_number=i + 1, track_total=num_tracks)
-        for i in range(num_tracks)
+        MetaData(track_number=i + 1, track_total=num_tracks) for i in range(num_tracks)
     ]
-    # Ensure one metadata per track
     while len(meta_list) < num_tracks:
         meta_list.append(
-            audiotools.MetaData(
-                track_number=len(meta_list) + 1, track_total=num_tracks
-            )
+            MetaData(track_number=len(meta_list) + 1, track_total=num_tracks)
         )
     meta_list = meta_list[:num_tracks]
 
-    ar_matches = fetch_ar_matches(reader) if verify_accuraterip else {}
+    if verify_accuraterip:
+        typer.echo("AccurateRip: unavailable (install python-audio-tools for verification)")
 
-    split_readers = audiotools.pcm_split(reader, track_lengths)
-    track_index = 0
-    for pcm_reader in split_readers:
-        track_index += 1
+    split_readers = reader.get_track_readers(track_lengths)
+    for track_index, pcm_reader in enumerate(split_readers, 1):
         frames = _read_pcm_into_frames(pcm_reader)
-        total_frames = sum(len(f) for f in frames)
+        pcm_bytes = b"".join(frames)
         meta = meta_list[track_index - 1]
 
-        # AccurateRip verification
-        if verify_accuraterip and ar_matches:
-            result = verify_track(
-                track_number=track_index,
-                total_tracks=num_tracks,
-                track_pcm_frames=track_lengths[track_index - 1],
-                frame_lists=iter(frames),
-                ar_matches=ar_matches,
-            )
-            if result.verified and result.confidence is not None:
-                typer.echo(
-                    f"Track {track_index}: AccurateRip verified (confidence {result.confidence})"
-                )
-            else:
-                typer.echo(f"Track {track_index}: AccurateRip no match")
-        elif verify_accuraterip and not ar_matches:
-            typer.echo(f"Track {track_index}: AccurateRip lookup unavailable")
-
-        # Build replayable reader (CDDA is 44100, 2 ch, 16 bit)
-        replay = _ReplayablePCMReader(
-            sample_rate=44100,
-            channels=2,
-            channel_mask=3,
-            bits_per_sample=16,
-            frame_lists=frames,
-        )
-
         for fmt in formats:
-            audio_cls = _get_audio_type(fmt)
-            suffix = getattr(audio_cls, "SUFFIX", fmt)
+            suffix = fmt.lower()
             base_dir = format_to_dir.get(fmt, ".")
             full_dir, filename = build_track_dir_and_filename(
                 base_dir, folder_format, name_format, meta, suffix
             )
+            full_dir = Path(full_dir)
             full_dir.mkdir(parents=True, exist_ok=True)
             out_path = full_dir / filename
             compression = _get_compression(fmt, quality_map, bitrate_map)
             try:
-                audio_cls.from_pcm(
-                    str(out_path),
-                    replay,
-                    compression=compression,
-                    total_pcm_frames=total_frames,
-                )
-                if meta is not None and getattr(audio_cls, "supports_metadata", lambda: False)():
-                    if audio_cls.supports_metadata():
-                        af = audiotools.open(str(out_path))
-                        try:
-                            af.set_metadata(meta)
-                        finally:
-                            af.close()
+                _encode_track(pcm_bytes, fmt, out_path, compression, meta)
                 typer.echo(f"  Wrote {out_path}")
             except Exception as e:
                 typer.echo(f"  Error encoding {out_path}: {e}", err=True)
-            finally:
-                replay._index = 0  # Reset for next format

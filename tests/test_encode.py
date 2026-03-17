@@ -3,19 +3,24 @@
 import pytest
 
 
-def test_get_audio_type_raises_without_audiotools(monkeypatch):
-    """_get_audio_type raises when audiotools is None."""
-    from src.encode import _get_audio_type
-    import src.encode as enc
-    monkeypatch.setattr(enc, "audiotools", None)
-    with pytest.raises(RuntimeError, match="audiotools"):
-        _get_audio_type("flac")
+def test_encode_unsupported_format_raises():
+    """_encode_track with unsupported format raises ValueError."""
+    from pathlib import Path
+    import tempfile
+    from src.encode import _encode_track
+    with tempfile.NamedTemporaryFile(suffix=".xyz", delete=False) as f:
+        path = Path(f.name)
+    try:
+        with pytest.raises(ValueError, match="Unsupported format"):
+            _encode_track(b"\x00" * 1000, "wav", path, None, None)
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def test_replayable_reader_has_expected_attrs():
     """_ReplayablePCMReader has sample_rate, channels, bits_per_sample."""
     from src.encode import _ReplayablePCMReader
-    r = _ReplayablePCMReader(44100, 2, 3, 16, [])
+    r = _ReplayablePCMReader(44100, 2, 3, 16, [b""])
     assert r.sample_rate == 44100
     assert r.channels == 2
     assert r.bits_per_sample == 16

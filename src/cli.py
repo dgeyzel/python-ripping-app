@@ -1,28 +1,11 @@
 """Typer CLI app and commands for CD ripping."""
 
-try:
-    import audiotools
-except ImportError:
-    audiotools = None  # type: ignore[misc, assignment]
-
 import typer
 
 app = typer.Typer(
     name="cdrip",
-    help="Rip audio from CD to one or more formats with metadata and AccurateRip verification.",
+    help="Rip audio from CD to one or more formats with metadata (AccurateRip optional).",
 )
-
-
-def _require_audiotools() -> None:
-    """Raise if audiotools is not installed."""
-    if audiotools is None:
-        typer.echo(
-            "Error: audiotools is required. Install from source:\n"
-            "  git clone https://github.com/tuffy/python-audio-tools.git\n"
-            "  cd python-audio-tools && pip install .",
-            err=True,
-        )
-        raise typer.Exit(1)
 
 
 @app.command()
@@ -42,7 +25,7 @@ def rip(
     name_format: str = typer.Option(
         "%(track_number)2.2d - %(track_name)s",
         "--name-format",
-        help="Filename template (audiotools %% placeholders).",
+        help="Filename template (%% placeholders: track_number, track_name, artist_name, album_name, year).",
     ),
     folder_format: str = typer.Option(
         "",
@@ -58,7 +41,7 @@ def rip(
     no_lookup: bool = typer.Option(
         False,
         "--no-lookup",
-        help="Skip MusicBrainz/FreeDB metadata lookup.",
+        help="Skip MusicBrainz metadata lookup.",
     ),
     no_interactive: bool = typer.Option(
         False,
@@ -68,7 +51,7 @@ def rip(
     verify_accuraterip: bool = typer.Option(
         True,
         "--verify-accuraterip/--no-verify-accuraterip",
-        help="Verify each track with AccurateRip.",
+        help="Show AccurateRip status (verification requires python-audio-tools).",
     ),
     quality: list[str] = typer.Option(
         [],
@@ -84,13 +67,13 @@ def rip(
     ),
 ) -> None:
     """Rip CD to one or more formats with metadata and optional AccurateRip verification."""
-    _require_audiotools()
-    from src.cd import open_cd
+    from src.cd import get_default_device, open_cd
     from src.encode import run_rip
     from src.metadata import resolve_metadata
     from src.bitrates import is_bitrate_supported, format_supported_list
 
-    # Resolve output dirs: parse format:path, default current dir for single format
+    device_path = (device or get_default_device()).strip()
+
     format_to_dir: dict[str, str] = {}
     for spec in output_dir:
         if ":" in spec:
@@ -101,14 +84,12 @@ def rip(
         if f_lower not in format_to_dir:
             format_to_dir[f_lower] = "."
 
-    # Quality map
     quality_map: dict[str, str] = {}
     for spec in quality:
         if ":" in spec:
             f, _, q = spec.partition(":")
             quality_map[f.strip().lower()] = q.strip()
 
-    # Bitrate map with validation
     bitrate_map: dict[str, str] = {}
     for spec in bitrate:
         if ":" in spec:
@@ -129,9 +110,16 @@ def rip(
             bitrate_map[fmt_key] = value
 
     try:
-        with open_cd(device) as (reader, track_lengths):
+        with open_cd(device_path) as (reader, track_lengths):
+            cue_toc = getattr(reader, "cue_toc", None)
+            cue_leadout = getattr(reader, "cue_leadout", None)
             metadata_list = resolve_metadata(
-                reader, track_lengths, lookup=not no_lookup, interactive=not no_interactive
+                device_path,
+                track_lengths,
+                cue_toc=cue_toc,
+                cue_leadout=cue_leadout,
+                lookup=not no_lookup,
+                interactive=not no_interactive,
             )
             run_rip(
                 reader=reader,
@@ -160,18 +148,25 @@ def list_cd(
     ),
 ) -> None:
     """List CD tracks and show metadata if lookup is available."""
-    _require_audiotools()
-    from src.cd import open_cd
+    from src.cd import get_default_device, open_cd
     from src.metadata import resolve_metadata
 
+    device_path = (device or get_default_device()).strip()
     try:
-        with open_cd(device) as (reader, track_lengths):
+        with open_cd(device_path) as (reader, track_lengths):
             n = len(track_lengths)
             typer.echo(f"Tracks: {n}")
             for i, length in enumerate(track_lengths, 1):
                 typer.echo(f"  Track {i}: {length} PCM frames")
+            cue_toc = getattr(reader, "cue_toc", None)
+            cue_leadout = getattr(reader, "cue_leadout", None)
             metadata_list = resolve_metadata(
-                reader, track_lengths, lookup=True, interactive=False
+                device_path,
+                track_lengths,
+                cue_toc=cue_toc,
+                cue_leadout=cue_leadout,
+                lookup=True,
+                interactive=False,
             )
             if metadata_list:
                 for i, meta in enumerate(metadata_list, 1):

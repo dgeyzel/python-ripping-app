@@ -40,16 +40,17 @@ def test_app_list_help():
     assert "device" in result.output or "--device" in result.output
 
 
-def test_app_requires_audiotools_for_rip():
-    """rip without audiotools exits with error message."""
-    result = runner.invoke(app, ["rip", "-f", "flac", "--no-lookup"])
-    # May exit 0 if audiotools is installed, or 1 with message if not
-    if result.exit_code != 0:
-        assert "audiotools" in result.output.lower()
+def test_app_rip_with_invalid_device_exits_with_error():
+    """rip with nonexistent CUE exits with error (no audiotools required)."""
+    result = runner.invoke(
+        app, ["rip", "-f", "flac", "--no-lookup", "-d", "nonexistent.cue"]
+    )
+    assert result.exit_code != 0
+    assert "Error" in result.output or "not found" in result.output.lower() or "CUE" in result.output
 
 
-def test_app_requires_audiotools_for_list():
-    """list without audiotools may exit with error."""
-    result = runner.invoke(app, ["list"])
-    if result.exit_code != 0:
-        assert "audiotools" in result.output.lower() or "Error" in result.output
+def test_app_list_with_invalid_device_exits_with_error():
+    """list with nonexistent CUE exits with error."""
+    result = runner.invoke(app, ["list", "-d", "nonexistent.cue"])
+    assert result.exit_code != 0
+    assert "Error" in result.output or "not found" in result.output.lower()

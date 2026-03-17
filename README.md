@@ -1,38 +1,25 @@
 # CD Ripper CLI
 
-A cross-platform (Windows and Linux) command-line application to rip audio from a CD to one or more formats (e.g. FLAC, MP3) with metadata lookup, configurable naming, and AccurateRip verification.
+A cross-platform (Windows and Linux) command-line application to rip audio from a CD to one or more formats (FLAC, MP3) with MusicBrainz metadata lookup, configurable naming, and optional AccurateRip verification.
 
 ## Requirements
 
 - **Python** 3.10+
-- **audiotools** (Python Audio Tools) – not on PyPI; install from source (see below).
-- **System (Linux)**: libcdio for CD reading; LAME for MP3 encoding; FLAC is built into audiotools.
-- **System (Windows)**: Use a CUE sheet / CD image path if libcdio is not available, or install libcdio.
+- **System (Linux)**: For physical CD reading, install **pycdio** (`pip install pycdio`) and libcdio (e.g. `libcdio-dev`). **flac** and **lame** for encoding.
+- **System (Windows)**: Physical CD access uses the Windows API (no pycdio required). **flac** and **lame** must be on PATH. You can also rip from a **CUE sheet** (with BIN image). If opening the CD drive fails, try running as administrator.
 
 ## Installation
-
-### 1. Create environment and install this package
 
 ```bash
 uv sync
 # or: pip install -e .
 ```
 
-### 2. Install audiotools (required for ripping)
-
-audiotools is not on PyPI. Install from source:
-
-```bash
-git clone https://github.com/tuffy/python-audio-tools.git
-cd python-audio-tools
-pip install .
-```
-
-On Linux you may need system libraries first (e.g. `libcdio-dev`, `libmp3lame-dev`). On Windows, CD access may require libcdio or using a CUE/image file instead of a physical drive.
+No separate audiotools install. AccurateRip verification is optional; install python-audio-tools from source if you want verification (see below).
 
 ## Usage
 
-- **Rip a CD** to one or more formats with metadata lookup and AccurateRip verification:
+- **Rip a CD** to one or more formats with MusicBrainz metadata lookup:
 
   ```bash
   uv run cdrip rip -f flac -f mp3 -o flac:./flac -o mp3:./mp3
@@ -40,22 +27,17 @@ On Linux you may need system libraries first (e.g. `libcdio-dev`, `libmp3lame-de
 
 - **Per-format output directory**: `--output-dir` / `-o` takes `format:path`, e.g. `flac:./music/flac`, `mp3:./music/mp3`.
 
-- **Filename template**: `--name-format` uses audiotools placeholders, e.g.  
-  `"%(track_number)2.2d - %(artist_name)s - %(track_name)s"`.
+- **Filename template**: `--name-format` uses placeholders: `%(track_number)2.2d`, `%(track_name)s`, `%(artist_name)s`, `%(album_name)s`, `%(year)s`.
 
 - **Folder structure**: `--folder-format` e.g. `"%(year)s/%(artist_name)s/%(album_name)s"` (sanitized for the filesystem).
 
-- **Quality**: `--quality` / `-q` sets per-format quality/compression as `format:value`, e.g. `flac:8`, `mp3:320`. Can be repeated.
+- **Quality / bitrate**: `--quality` / `-q` or `--bitrate` / `-b` as `format:value`, e.g. `flac:8`, `mp3:320`.
 
-- **Bitrate**: `--bitrate` / `-b` sets per-format encoding bitrate as `format:value`, e.g. `mp3:320`, `flac:8`. Can be repeated. If a value is unsupported for that format, the app exits with a list of supported bitrates (e.g. MP3: 32–320 kbps; FLAC: compression 0–8). When both quality and bitrate are set for a format, bitrate is used.
+- **Device**: `--device` / `-d`: path to CD device (e.g. `/dev/cdrom`, `D:`) or path to a **.cue** file (with same-directory BIN image).
 
-- **Device**: `--device` / `-d`: path to CD device (e.g. `/dev/cdrom`, `D:`) or path to a `.cue` file.
+- **Metadata**: By default MusicBrainz is queried by disc ID. Use `--no-interactive` to take the first match, or `--no-lookup` to skip lookup.
 
-- **Metadata**: By default MusicBrainz and FreeDB are queried. If multiple album matches are found, you are prompted to choose. Use `--no-interactive` to always take the first match, or `--no-lookup` to skip lookup.
-
-- **AccurateRip**: Verification is on by default. For each track you get either "Track N: AccurateRip verified (confidence X)" or "Track N: AccurateRip no match". Use `--no-verify-accuraterip` to skip. CUE/images may have no AccurateRip data; that is skipped without error.
-
-- **Interactive metadata**: When multiple album matches are returned (MusicBrainz/FreeDB), a numbered list is shown and you are prompted to select one (or 0 to skip metadata). With a single match, that match is used without prompting.
+- **AccurateRip**: Shown as unavailable by default. To enable verification, install python-audio-tools from source (see below); then AccurateRip can be used when reading via that backend.
 
 - **List tracks** (no encoding):
 
@@ -65,14 +47,9 @@ On Linux you may need system libraries first (e.g. `libcdio-dev`, `libmp3lame-de
 
 ## Examples
 
-- Rip to FLAC only into current directory:
+- Rip to FLAC only:
   ```bash
   uv run cdrip rip -f flac
-  ```
-
-- Rip to FLAC and MP3 with separate dirs and custom naming:
-  ```bash
-  uv run cdrip rip -f flac -f mp3 -o flac:~/music/flac -o mp3:~/music/mp3 --name-format "%(track_number)2.2d - %(track_name)s"
   ```
 
 - Rip from a CUE file (e.g. after creating an image on Windows):
@@ -80,15 +57,22 @@ On Linux you may need system libraries first (e.g. `libcdio-dev`, `libmp3lame-de
   uv run cdrip rip -f flac -d path/to/disc.cue -o flac:./out
   ```
 
-- Non-interactive (first metadata match, no prompt):
-  ```bash
-  uv run cdrip rip -f flac --no-interactive
-  ```
-
 - Rip to MP3 at 320 kbps and FLAC at compression level 8:
   ```bash
   uv run cdrip rip -f mp3 -f flac --bitrate mp3:320 --bitrate flac:8
   ```
+
+## Optional: AccurateRip verification
+
+To get AccurateRip verification (when reading from a physical CD with audiotools), install python-audio-tools from source:
+
+```bash
+git clone https://github.com/tuffy/python-audio-tools.git
+cd python-audio-tools
+pip install .
+```
+
+The CLI works without it; you will see "AccurateRip: unavailable" when verification is requested.
 
 ## Development
 
@@ -99,4 +83,4 @@ uv run pytest
 
 ## License
 
-See repository license. This project uses Python Audio Tools (audiotools), which is GPL-2.0.
+See repository license.

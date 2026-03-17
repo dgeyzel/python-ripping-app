@@ -1,67 +1,117 @@
-"""Metadata lookup via MusicBrainz and FreeDB with interactive match selection."""
+"""Metadata lookup via MusicBrainz with interactive match selection."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from audiotools.cdio import CDDAReader
+from src.metadata_types import MetaData
 
 try:
-    import audiotools
-    from audiotools import musicbrainz
-    from audiotools import freedb
-except ImportError:
-    audiotools = None  # type: ignore[misc, assignment]
-    musicbrainz = None  # type: ignore[misc, assignment]
-    freedb = None  # type: ignore[misc, assignment]
+    import discid
+    import musicbrainzngs
+except Exception:
+    discid = None  # type: ignore[misc, assignment]
+    musicbrainzngs = None  # type: ignore[misc, assignment]
 
 
-# Default MusicBrainz and FreeDB servers (audiotools typically uses these)
-MUSICBRAINZ_SERVER = "musicbrainz.org"
-MUSICBRAINZ_PORT = 80
-FREEDB_SERVER = "gnudb.gnudb.org"
-FREEDB_PORT = 80
-
-
-def _collect_musicbrainz_matches(reader: CDDAReader) -> list[list[Any]]:
-    """Return list of metadata matches from MusicBrainz (each match is list of MetaData)."""
-    if musicbrainz is None:
-        return []
+def _get_disc_id(
+    device_path: str,
+    cue_toc: tuple[int, int, list[int]] | None,
+    cue_leadout: int | None,
+) -> Any:
+    """Return discid.Disc from device or from CUE TOC (first, last, offsets, leadout)."""
+    if discid is None:
+        return None
+    if cue_toc is not None and cue_leadout is not None:
+        first, last, offsets = cue_toc
+        if first < 1 or last < first or len(offsets) != last - first + 1:
+            return None
+        try:
+            return discid.put(first, last, cue_leadout, offsets)
+        except Exception:
+            return None
     try:
-        disc_id = musicbrainz.DiscID.from_cddareader(reader)
-        matches = list(musicbrainz.perform_lookup(disc_id, MUSICBRAINZ_SERVER, MUSICBRAINZ_PORT))
-        return matches
+        return discid.read(device_path)
+    except Exception:
+        return None
+
+
+def _musicbrainz_lookup(disc: Any) -> list[list[MetaData]]:
+    """Query MusicBrainz by disc id; return list of matches (each match = list of MetaData)."""
+    if musicbrainzngs is None or disc is None:
+        return []
+    musicbrainzngs.set_useragent("cd-ripper", "0.1.0", "https://github.com/cd-ripper")
+    try:
+        result = musicbrainzngs.get_releases_by_discid(
+            disc.id, includes=["artists", "recordings"]
+        )
     except Exception:
         return []
-
-
-def _collect_freedb_matches(reader: CDDAReader) -> list[list[Any]]:
-    """Return list of metadata matches from FreeDB (each match is list of MetaData)."""
-    if freedb is None:
+    if not result.get("disc") or "release-list" not in result["disc"]:
         return []
-    try:
-        disc_id = freedb.DiscID.from_cddareader(reader)
-        matches = list(freedb.perform_lookup(disc_id, FREEDB_SERVER, FREEDB_PORT))
-        return matches
-    except Exception:
-        return []
+    matches: list[list[MetaData]] = []
+    for release in result["disc"]["release-list"]:
+        artist_name = release.get("artist-credit-phrase") or "Unknown"
+        if artist_name == "Unknown":
+            artist_credit = release.get("artist-credit", [])
+            if artist_credit and isinstance(artist_credit[0], dict):
+                artist_name = (
+                    artist_credit[0].get("artist", {}).get("name", "Unknown")
+                    or "Unknown"
+                )
+        album_name = release.get("title", "Unknown")
+        date = release.get("date", "") or ""
+        year = date[:4] if len(date) >= 4 else ""
+        medium_list = release.get("medium-list", [])
+        if not medium_list:
+            matches.append(
+                [
+                    MetaData(
+                        track_number=1,
+                        track_total=1,
+                        artist_name=artist_name,
+                        album_name=album_name,
+                        year=year,
+                    )
+                ]
+            )
+            continue
+        medium = medium_list[0]
+        track_list = medium.get("track-list", [])
+        meta_list: list[MetaData] = []
+        total = len(track_list)
+        for i, t in enumerate(track_list):
+            rec = t.get("recording", {})
+            title = rec.get("title", "")
+            meta_list.append(
+                MetaData(
+                    track_number=i + 1,
+                    track_total=total,
+                    track_name=title,
+                    artist_name=artist_name,
+                    album_name=album_name,
+                    year=year,
+                )
+            )
+        if meta_list:
+            matches.append(meta_list)
+    return matches
 
 
-def _format_match_summary(meta_list: list[Any], index: int) -> str:
+def _format_match_summary(meta_list: list[MetaData], index: int) -> str:
     """Format one match for display (e.g. '1. Artist – Album (Year)')."""
     if not meta_list:
         return f"{index}. (no metadata)"
     first = meta_list[0]
-    artist = getattr(first, "artist_name", None) or getattr(first, "performer_name", None) or "Unknown"
-    album = getattr(first, "album_name", None) or "Unknown"
-    year = getattr(first, "year", None) or ""
+    artist = first.artist_name or first.performer_name or "Unknown"
+    album = first.album_name or "Unknown"
+    year = first.year or ""
     if year:
         return f"{index}. {artist} – {album} ({year})"
     return f"{index}. {artist} – {album}"
 
 
-def _prompt_choice(matches: list[list[Any]]) -> list[Any] | None:
+def _prompt_choice(matches: list[list[MetaData]]) -> list[MetaData] | None:
     """Prompt user to select a match; return selected list or None for skip."""
     if not matches:
         return None
@@ -85,32 +135,32 @@ def _prompt_choice(matches: list[list[Any]]) -> list[Any] | None:
 
 
 def resolve_metadata(
-    reader: CDDAReader,
+    device_path: str,
     track_lengths: list[int],
+    cue_toc: tuple[int, int, list[int]] | None = None,
+    cue_leadout: int | None = None,
     lookup: bool = True,
     interactive: bool = True,
-) -> list[Any] | None:
-    """Resolve metadata for all tracks: lookup and optionally prompt for choice.
+) -> list[MetaData] | None:
+    """Resolve metadata for all tracks via MusicBrainz.
 
     Args:
-        reader: Open CDDAReader (will not be closed).
-        track_lengths: Number of tracks (used only to build empty metadata if needed).
-        lookup: If True, perform MusicBrainz and FreeDB lookup.
+        device_path: CD device path or path to .cue file (for disc ID).
+        track_lengths: Number of tracks (for padding).
+        cue_toc: If reading from CUE, (first_track, last_track, [start_sector, ...]).
+        cue_leadout: If reading from CUE, lead-out sector for discid.put().
+        lookup: If True, perform MusicBrainz lookup.
         interactive: If True and multiple matches, prompt user; else use first match.
 
     Returns:
-        List of MetaData (one per track) or None if no metadata (use empty per-track).
+        List of MetaData (one per track) or None if no metadata.
     """
-    if audiotools is None:
-        return None
     if not lookup:
         return None
-    matches: list[list[Any]] = []
-    matches.extend(_collect_musicbrainz_matches(reader))
-    matches.extend(_collect_freedb_matches(reader))
-    # Deduplicate by string representation of first track (same album)
+    disc = _get_disc_id(device_path, cue_toc, cue_leadout)
+    matches = _musicbrainz_lookup(disc) if disc else []
     seen: set[str] = set()
-    unique: list[list[Any]] = []
+    unique: list[list[MetaData]] = []
     for meta_list in matches:
         key = _format_match_summary(meta_list, 0)
         if key not in seen:
@@ -124,12 +174,23 @@ def resolve_metadata(
         chosen = unique[0] if unique else None
     if chosen is None:
         return None
-    # Ensure we have one MetaData per track; pad or trim to match track_count
     track_count = len(track_lengths)
-    result: list[Any] = []
+    result: list[MetaData] = []
     for i in range(track_count):
         if i < len(chosen):
-            result.append(chosen[i])
+            meta = chosen[i]
+            result.append(
+                MetaData(
+                    track_number=i + 1,
+                    track_total=track_count,
+                    track_name=meta.track_name,
+                    artist_name=meta.artist_name,
+                    album_name=meta.album_name,
+                    year=meta.year,
+                )
+            )
         else:
-            result.append(audiotools.MetaData(track_number=i + 1, track_total=track_count))
+            result.append(
+                MetaData(track_number=i + 1, track_total=track_count)
+            )
     return result

@@ -26,18 +26,7 @@ def format_filename(
     suffix: str,
     file_path_fallback: str = "track",
 ) -> str:
-    """Build a filename from a template and metadata using audiotools-style placeholders.
-
-    Uses audiotools.AudioFile.track_name if available; otherwise a simple fallback.
-    """
-    try:
-        import audiotools
-        return audiotools.AudioFile.track_name(
-            file_path_fallback, metadata, name_format, suffix
-        )
-    except Exception:
-        pass
-    # Fallback: replace common placeholders
+    """Build a filename from a template and metadata (%% placeholders)."""
     out = name_format
     for attr in ("track_number", "track_name", "artist_name", "album_name", "year"):
         val = getattr(metadata, attr, None)
@@ -61,23 +50,16 @@ def format_folder(
     """Build a folder path string from template and metadata; each segment sanitized."""
     if not folder_format:
         return ""
-    try:
-        import audiotools
-        # Use same placeholders as track_name; build a path and sanitize each part
-        raw = audiotools.AudioFile.track_name(
-            "", metadata, folder_format.replace("/", " "), ""
-        )
-    except Exception:
-        raw = folder_format
-        for attr in ("year", "artist_name", "album_name", "track_number", "track_name"):
-            val = getattr(metadata, attr, None)
-            if val is not None:
-                raw = raw.replace(f"%({attr})s", str(val))
-            if attr == "track_number" and val is not None:
-                try:
-                    raw = raw.replace("%(track_number)2.2d", f"{int(val):02d}")
-                except (TypeError, ValueError):
-                    raw = raw.replace("%(track_number)2.2d", str(val))
+    raw = folder_format
+    for attr in ("year", "artist_name", "album_name", "track_number", "track_name"):
+        val = getattr(metadata, attr, None)
+        if val is not None:
+            raw = raw.replace(f"%({attr})s", str(val))
+        if attr == "track_number" and val is not None:
+            try:
+                raw = raw.replace("%(track_number)2.2d", f"{int(val):02d}")
+            except (TypeError, ValueError):
+                raw = raw.replace("%(track_number)2.2d", str(val))
     parts = re.split(r"[/\\]+", raw.strip())
     return str(Path(*[sanitize_path_part(p) for p in parts if p]))
 
@@ -99,7 +81,6 @@ def build_track_dir_and_filename(
     suffix: str,
 ) -> tuple[Path, str]:
     """Return (full_dir_path, filename) for one track."""
-    from pathlib import Path
     base = Path(base_dir)
     folder = format_folder(folder_format, metadata)
     if folder:
