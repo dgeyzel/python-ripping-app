@@ -7,6 +7,10 @@ A cross-platform (Windows and Linux) application to rip audio from a CD to one o
 - **Python** 3.10+
 - **System (Linux)**: For physical CD reading, install **pycdio** (`pip install pycdio`) and libcdio (e.g. `libcdio-dev`). **flac** and **lame** for encoding.
 - **System (Windows)**: Physical CD access uses the Windows API (no pycdio required). **flac** and **lame** must be on PATH. You can also rip from a **CUE sheet** (with BIN image). If opening the CD drive fails, try running as administrator.
+- **Edit tab**: Install **ffmpeg** and ensure it is on PATH for source runs.
+  A local `bin/` directory next to the project, or a packaged build's `bin/`
+  folder, can also provide **ffmpeg/ffprobe** for pydub-based editing and
+  export of compressed formats.
 
 ## Installation
 
@@ -29,6 +33,7 @@ The GUI provides:
 
 - **List CD**: Choose device or CUE file, list tracks and MusicBrainz metadata.
 - **Rip CD**: Set device, output formats (FLAC, MP3, WAV), per-format output dirs, quality/bitrate, and options for metadata lookup and AccurateRip. Rip runs in the background with a log.
+- **Edit**: Load one or more music files and apply batch edits with pydub, including gain, normalize, trim, fade, reverse, channel conversion, pan, silence trimming, append, and overlay before exporting the results.
 - **Filename and folder format**: Each position in the format is a dropdown; select the token (track number, track name, artist, album, year, extension, separators, etc.) for that slot. Add or remove slots with **+ Add** and **×**. A live preview shows the resulting path/filename pattern.
 
 ## CLI Usage
@@ -62,16 +67,19 @@ The GUI provides:
 ## Examples
 
 - Rip to FLAC only:
+
   ```bash
   uv run cdrip rip -f flac
   ```
 
 - Rip from a CUE file (e.g. after creating an image on Windows):
+
   ```bash
   uv run cdrip rip -f flac -d path/to/disc.cue -o flac:./out
   ```
 
 - Rip to MP3 at 320 kbps and FLAC at compression level 8:
+
   ```bash
   uv run cdrip rip -f mp3 -f flac --bitrate mp3:320 --bitrate flac:8
   ```
@@ -98,7 +106,10 @@ pyinstaller cdrip.spec
 pyinstaller cdrip_gui.spec
 ```
 
-Output: `dist/cdrip`, `dist/cdrip-gui` (or `.exe` on Windows). The apps use **flac** and **lame** from the system PATH unless you bundle them in the project’s `bin/` folder before building (see [Building executables](docs/building-executables.md)).
+Output: `dist/cdrip`, `dist/cdrip-gui` (or `.exe` on Windows). The apps use
+**flac**, **lame**, **ffmpeg**, and **ffprobe** from the system PATH unless you
+bundle them in the project’s `bin/` folder before building (see [Building
+executables](docs/building-executables.md)).
 
 ## Development
 

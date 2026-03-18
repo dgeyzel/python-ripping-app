@@ -57,6 +57,7 @@ data/*
 
 python-ripper-app.code-workspace
 python-audio-tools/
+dist/
 .env
 .vscode/
 .ruff_cache

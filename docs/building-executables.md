@@ -41,14 +41,18 @@ Or use the helper script (from project root):
 uv run python scripts/build_exe.py
 ```
 
-## flac and lame
+## Bundled native tools
 
-Encoding to FLAC and MP3 requires **flac** and **lame**:
+Encoding to FLAC and MP3, plus the Edit tab's compressed exports, can use
+native tools from a `bin/` folder next to the project or bundled app:
 
-- **Without bundling**: Install them on the system and ensure they are on PATH. The built executable will call them via PATH.
-- **With bundling**: Before running PyInstaller, put the correct binaries in the project’s `bin/` directory:
-  - **Windows**: `flac.exe` and `lame.exe`
-  - **Linux**: `flac` and `lame` (from distro packages or static builds)
+- **Without bundling**: Install **flac**, **lame**, **ffmpeg**, and **ffprobe**
+  on the system and ensure they are on PATH. The built executable will call
+  them via PATH.
+- **With bundling**: Before running PyInstaller, put the correct binaries in
+  the project’s `bin/` directory:
+  - **Windows**: `flac.exe`, `lame.exe`, `ffmpeg.exe`, and `ffprobe.exe`
+  - **Linux**: `flac`, `lame`, `ffmpeg`, and `ffprobe` (from distro packages or static builds)
 
 See `bin/README.md` for details. If `bin/` is missing or empty, the app falls back to PATH.
 
